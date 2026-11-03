@@ -16,18 +16,9 @@ namespace RefAnimationGrid
         public const string PluginName = "Reference Animation Grid";
         public const string PluginVersion = "1.0.0";
 
-        private string imagesFolder;
-        private List<Texture2D> loadedTextures = new List<Texture2D>();
-        private int currentFrameIndex = 0;
-
-        private GameObject activeWall;
-        private Renderer frontRenderer;
-        private Renderer backRenderer;
-
-        private const string SHADER_PROPERTY_NAME = "_UserTex";
-
-        // Timer to avoid spamming the log every frame
-        private float nextLogTime = 0f;
+        private static string imagesFolder;
+        private static List<Texture2D> loadedTextures = new List<Texture2D>();
+        private float nextSearchTime = 0f;
 
         private void Awake()
         {
@@ -44,67 +35,26 @@ namespace RefAnimationGrid
 
         private void Update()
         {
-            // Radar search for the spawned wall object
-            if (activeWall == null)
+            // Сканируем сцену раз в 3 секунды на появление ЛЮБОЙ из стен
+            if (Time.time > nextSearchTime)
             {
-                // METHOD A: Try to find by name in the scene (safer for Mod Tool objects)
-                GameObject wallObj = GameObject.Find("Animation grid A2(Clone)") ?? GameObject.Find("Animation grid A2");
+                nextSearchTime = Time.time + 3f;
 
-                if (wallObj != null)
+                // Ищем префаб А2
+                GameObject wallA2 = GameObject.Find("Animation grid A2(Clone)") ?? GameObject.Find("Animation grid A2");
+                if (wallA2 != null && wallA2.GetComponent<WallController>() == null)
                 {
-                    Logger.LogInfo($"[RefAnimationGrid] Found wall object by name: {wallObj.name}");
-                    InitializeWall(wallObj);
+                    wallA2.AddComponent<WallController>();
+                    Logger.LogInfo("[RefAnimationGrid] Linked controller to Animation grid A2");
                 }
-                else
+
+                // Ищем префаб B2
+                GameObject wallB2 = GameObject.Find("Animation grid B2(Clone)") ?? GameObject.Find("Animation grid B2");
+                if (wallB2 != null && wallB2.GetComponent<WallController>() == null)
                 {
-                    // Periodic log tracking (once every 5 seconds) so it won't flood the console
-                    if (Time.time > nextLogTime)
-                    {
-                        Logger.LogInfo("[RefAnimationGrid] Searching for 'Animation grid A2' in the scene...");
-                        nextLogTime = Time.time + 5f;
-                    }
+                    wallB2.AddComponent<WallController>();
+                    Logger.LogInfo("[RefAnimationGrid] Linked controller to Animation grid B2");
                 }
-            }
-
-            if (activeWall == null || frontRenderer == null || backRenderer == null || loadedTextures.Count == 0) return;
-
-            // Frame switching controls with explicit feedback logs
-            if (Input.GetKeyDown(KeyCode.RightBracket))
-            {
-                currentFrameIndex = (currentFrameIndex + 1) % loadedTextures.Count;
-                Logger.LogInfo($"[RefAnimationGrid] Next key pressed. Target index: {currentFrameIndex}");
-                ApplyCurrentTexture();
-            }
-            if (Input.GetKeyDown(KeyCode.LeftBracket))
-            {
-                currentFrameIndex--;
-                if (currentFrameIndex < 0) currentFrameIndex = loadedTextures.Count - 1;
-                Logger.LogInfo($"[RefAnimationGrid] Prev key pressed. Target index: {currentFrameIndex}");
-                ApplyCurrentTexture();
-            }
-        }
-
-        private void InitializeWall(GameObject wallObj)
-        {
-            activeWall = wallObj;
-
-            // Searching strictly for child objects PlaneV front and PlaneV back
-            Transform frontCanvas = activeWall.transform.Find("PlaneV front");
-            Transform backCanvas = activeWall.transform.Find("PlaneV back");
-
-            if (frontCanvas != null && backCanvas != null)
-            {
-                frontRenderer = frontCanvas.GetComponent<Renderer>();
-                backRenderer = backCanvas.GetComponent<Renderer>();
-
-                Logger.LogInfo("[RefAnimationGrid] Success: Meshes 'PlaneV front' and 'PlaneV back' linked successfully!");
-                ApplyCurrentTexture();
-            }
-            else
-            {
-                Logger.LogError("[RefAnimationGrid] Error: Failed to find child meshes 'PlaneV front' or 'PlaneV back' inside the root object!");
-                // Reset so it tries to find it again if hierarchy wasn't ready
-                activeWall = null;
             }
         }
 
@@ -129,38 +79,55 @@ namespace RefAnimationGrid
             Logger.LogInfo($"[RefAnimationGrid] Successfully loaded reference frames count: {loadedTextures.Count}");
         }
 
-        private void ApplyCurrentTexture()
+        // Внутренний динамический контроллер для конкретной стены
+        public class WallController : MonoBehaviour
         {
-            if (frontRenderer == null || backRenderer == null || loadedTextures.Count == 0) return;
+            private Renderer frontRenderer;
+            private Renderer backRenderer;
+            private int currentFrameIndex = 0;
+            private const string SHADER_PROPERTY_NAME = "_UserTex";
 
-            Texture2D currentTex = loadedTextures[currentFrameIndex];
-            Logger.LogInfo($"[RefAnimationGrid] Applying texture index [{currentFrameIndex}] to materials...");
-
-            // Checking Shader Graph property presence with logs
-            if (frontRenderer.material != null)
+            private void Start()
             {
-                if (frontRenderer.material.HasProperty(SHADER_PROPERTY_NAME))
+                Transform frontCanvas = transform.Find("PlaneV front");
+                Transform backCanvas = transform.Find("PlaneV back");
+
+                if (frontCanvas != null && backCanvas != null)
                 {
-                    frontRenderer.material.SetTexture(SHADER_PROPERTY_NAME, currentTex);
-                    Logger.LogInfo("[RefAnimationGrid] Texture sent to PlaneV front (_UserTex)");
-                }
-                else
-                {
-                    Logger.LogWarning($"[RefAnimationGrid] Warning: PlaneV front material does NOT have property '{SHADER_PROPERTY_NAME}'!");
+                    frontRenderer = frontCanvas.GetComponent<Renderer>();
+                    backRenderer = backCanvas.GetComponent<Renderer>();
+                    ApplyTexture();
                 }
             }
 
-            if (backRenderer.material != null)
+            private void Update()
             {
-                if (backRenderer.material.HasProperty(SHADER_PROPERTY_NAME))
+                if (frontRenderer == null || backRenderer == null || loadedTextures.Count == 0) return;
+
+                // Перелистывание кадров (работает синхронно или независимо для каждой заспавненной стены)
+                if (Input.GetKeyDown(KeyCode.RightBracket))
                 {
+                    currentFrameIndex = (currentFrameIndex + 1) % loadedTextures.Count;
+                    ApplyTexture();
+                }
+                if (Input.GetKeyDown(KeyCode.LeftBracket))
+                {
+                    currentFrameIndex--;
+                    if (currentFrameIndex < 0) currentFrameIndex = loadedTextures.Count - 1;
+                    ApplyTexture();
+                }
+            }
+
+            private void ApplyTexture()
+            {
+                if (loadedTextures.Count == 0) return;
+                Texture2D currentTex = loadedTextures[currentFrameIndex];
+
+                if (frontRenderer != null && frontRenderer.material != null && frontRenderer.material.HasProperty(SHADER_PROPERTY_NAME))
+                    frontRenderer.material.SetTexture(SHADER_PROPERTY_NAME, currentTex);
+
+                if (backRenderer != null && backRenderer.material != null && backRenderer.material.HasProperty(SHADER_PROPERTY_NAME))
                     backRenderer.material.SetTexture(SHADER_PROPERTY_NAME, currentTex);
-                    Logger.LogInfo("[RefAnimationGrid] Texture sent to PlaneV back (_UserTex)");
-                }
-                else
-                {
-                    Logger.LogWarning($"[RefAnimationGrid] Warning: PlaneV back material does NOT have property '{SHADER_PROPERTY_NAME}'!");
-                }
             }
         }
     }
