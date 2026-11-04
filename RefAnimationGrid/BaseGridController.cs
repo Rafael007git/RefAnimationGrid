@@ -33,12 +33,16 @@ namespace RefAnimationGrid
         protected abstract void ApplyTexture();
     }
 
-    // ОБНОВЛЕННЫЙ КОНТРОЛЛЕР СТЕНЫ С РЕЖИМАМИ «PLAY AND SELECT» И «REFERENCE»
+    // ОБНОВЛЕННЫЙ КОНТРОЛЛЕР СТЕНЫ (ИСПРАВЛЕНЫ ПРОПОРЦИИ И ДОБАВЛЕНА СУПЕР-ПЕРЕМОТКА)
     public class WallController : BaseGridController
     {
         protected override List<Texture2D> TargetTextures => TextureRepository.WallTextures;
         private Renderer frontRenderer;
         private Renderer backRenderer;
+
+        // Ссылки на трансформы холстов для изолированного масштабирования
+        private Transform frontCanvasTransform;
+        private Transform backCanvasTransform;
 
         // Video fields
         private VideoPlayer videoPlayer;
@@ -46,7 +50,6 @@ namespace RefAnimationGrid
         private string activeVideoName = "";
         private List<long> savedFrames = new List<long>();
         private int currentKeyframeIndex = 0;
-        private Vector3 originalScale;
 
         // UI & Режимы: false = Play and Select (Mode 1), true = Reference (Mode 2)
         private bool isReferenceMode = false;
@@ -54,13 +57,20 @@ namespace RefAnimationGrid
 
         private void Start()
         {
-            originalScale = transform.localScale;
             Transform frontCanvas = transform.Find("PlaneV front");
             Transform backCanvas = transform.Find("PlaneV back");
-            if (frontCanvas != null) frontRenderer = frontCanvas.GetComponent<Renderer>();
-            if (backCanvas != null) backRenderer = backCanvas.GetComponent<Renderer>();
 
-            // Сканируем папку Video на наличие .mp4
+            if (frontCanvas != null)
+            {
+                frontRenderer = frontCanvas.GetComponent<Renderer>();
+                frontCanvasTransform = frontCanvas;
+            }
+            if (backCanvas != null)
+            {
+                backRenderer = backCanvas.GetComponent<Renderer>();
+                backCanvasTransform = backCanvas;
+            }
+
             string[] mp4Files = Directory.GetFiles(TextureRepository.VideoFolder, "*.mp4");
             if (mp4Files.Length > 0)
             {
@@ -87,7 +97,6 @@ namespace RefAnimationGrid
             videoPlayer.isLooping = true;
             videoPlayer.skipOnDrop = true;
 
-            // Виртуальный холст под 1080p видеопоток
             videoRenderTexture = new RenderTexture(1920, 1080, 16, RenderTextureFormat.ARGB32);
             videoRenderTexture.Create();
             videoPlayer.renderMode = VideoRenderMode.RenderTexture;
@@ -99,9 +108,14 @@ namespace RefAnimationGrid
 
         private void OnVideoPrepared(VideoPlayer source)
         {
-            // Умное изменение масштаба холста по ширине под Aspect Ratio видео кадра
             float aspectRatio = (float)source.texture.width / source.texture.height;
-            transform.localScale = new Vector3(originalScale.x * aspectRatio, originalScale.y, originalScale.z);
+
+            // ИСПРАВЛЕНИЕ: корень transform не трогаем! Масштабируем ТОЛЬКО вертикальные холсты.
+            // Высота остается строго 2 метра (y = 2), а ширина подстраивается под видео (x = 2 * aspectRatio)
+            Vector3 targetCanvasScale = new Vector3(2.0f * aspectRatio, 2.0f, 1.0f);
+
+            if (frontCanvasTransform != null) frontCanvasTransform.localScale = targetCanvasScale;
+            if (backCanvasTransform != null) backCanvasTransform.localScale = targetCanvasScale;
 
             if (frontRenderer != null && frontRenderer.material != null)
                 frontRenderer.material.SetTexture(SHADER_PROPERTY_NAME, videoRenderTexture);
@@ -119,7 +133,6 @@ namespace RefAnimationGrid
             if (videoPlayer.isPlaying)
             {
                 videoPlayer.Pause();
-                // При остановке в режиме Play And Select пытаемся мягко сопоставить текущий кадр с индексами
                 SyncKeyframeIndex();
             }
             else
@@ -135,14 +148,18 @@ namespace RefAnimationGrid
 
             if (isReferenceMode && savedFrames.Count > 0)
             {
-                // MODE 2: Шагаем только по отобранным кадрам
+                // MODE 2: Шаг по золотым кадрам
                 currentKeyframeIndex = (currentKeyframeIndex + 1) % savedFrames.Count;
                 videoPlayer.frame = savedFrames[currentKeyframeIndex];
             }
             else
             {
-                // MODE 1: Мотаем покадрово по всему видео
-                videoPlayer.frame = (videoPlayer.frame + 1) % (long)videoPlayer.frameCount;
+                // MODE 1: УМНАЯ СУПЕР-ПЕРЕМОТКА ВПЕРЕД
+                long step = 1;
+                if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) step = 100;
+                else if (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) step = 500;
+
+                videoPlayer.frame = (videoPlayer.frame + step) % (long)videoPlayer.frameCount;
             }
         }
 
@@ -153,16 +170,22 @@ namespace RefAnimationGrid
 
             if (isReferenceMode && savedFrames.Count > 0)
             {
-                // MODE 2: Шагаем назад по отобранным кадрам
+                // MODE 2: Шаг назад по золотым кадрам
                 currentKeyframeIndex--;
                 if (currentKeyframeIndex < 0) currentKeyframeIndex = savedFrames.Count - 1;
                 videoPlayer.frame = savedFrames[currentKeyframeIndex];
             }
             else
             {
-                // MODE 1: Мотаем покадрово назад по всему видео
-                long target = videoPlayer.frame - 1;
-                if (target < 0) target = (long)videoPlayer.frameCount - 1;
+                // MODE 1: УМНАЯ СУПЕР-ПЕРЕМОТКА НАЗАД
+                long step = 1;
+                if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) step = 100;
+                else if (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) step = 500;
+
+                long target = videoPlayer.frame - step;
+                if (target < 0) target = (long)videoPlayer.frameCount + target; // Зацикливание с учетом большого шага
+                if (target < 0) target = 0; // Дополнительная защита
+
                 videoPlayer.frame = target;
             }
         }
@@ -181,12 +204,10 @@ namespace RefAnimationGrid
             currentKeyframeIndex = closest;
         }
 
-        // ОТРИСОВКА ИНТЕРФЕЙСА ОКНА УПРАВЛЕНИЯ
         private void OnGUI()
         {
             if (!IsVideoMode || videoPlayer == null || !videoPlayer.isPrepared) return;
 
-            // Ограничиваем отрисовку окон: рисуем интерфейс только если игрок стоит лицом к этой стене
             var mainPlugin = FindObjectOfType<Plugin>();
             if (mainPlugin != null && mainPlugin.GetCurrentTarget() != this) return;
 
@@ -198,26 +219,23 @@ namespace RefAnimationGrid
             long currentFrame = videoPlayer.frame;
             bool isSaved = savedFrames.Contains(currentFrame);
 
-            // Строка состояния кадра
             GUILayout.Label($"Video: <b>{activeVideoName}</b>");
             GUILayout.Label($"Current Frame: <b>{currentFrame}</b> / {videoPlayer.frameCount}");
             GUILayout.Label($"Selected Frames Count: <b>{savedFrames.Count}</b>");
 
             GUILayout.Space(5);
 
-            // Кнопка Добавления / Удаления кадра из списка
             string buttonText = isSaved ? "❌ REMOVE CURRENT FRAME" : "⭐ ADD CURRENT FRAME";
             if (GUILayout.Button(buttonText))
             {
                 if (isSaved) savedFrames.Remove(currentFrame);
                 else { savedFrames.Add(currentFrame); savedFrames.Sort(); }
-                TextureRepository.SaveDatabase(); // Мгновенный авто-сейв базы данных
+                TextureRepository.SaveDatabase();
                 SyncKeyframeIndex();
             }
 
             GUILayout.Space(5);
 
-            // Переключатель основных режимов мода
             string modeLabel = isReferenceMode ? "MODE: [REFERENCE VIEW]" : "MODE: [PLAY AND SELECT]";
             if (GUILayout.Button(modeLabel))
             {
@@ -225,7 +243,7 @@ namespace RefAnimationGrid
                 if (isReferenceMode) SyncKeyframeIndex();
             }
 
-            GUI.DragWindow(); // Разрешаем перетаскивать окошко по экрану мышкой
+            GUI.DragWindow();
         }
 
         protected override void ApplyTexture()
@@ -247,6 +265,7 @@ namespace RefAnimationGrid
             }
         }
     }
+
 
     // Контроллеры мольбертов (Остаются без изменений)
     // 2. VERTICAL CONTENT CONTROLLER (Universal auto-find by shader property)
