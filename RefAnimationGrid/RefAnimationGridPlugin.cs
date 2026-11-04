@@ -12,12 +12,12 @@ namespace RefAnimationGrid
     {
         public const string PluginGuid = "com.lorifel.refanimationgrid";
         public const string PluginName = "Reference Animation Grid";
-        public const string PluginVersion = "1.0.2";
+        public const string PluginVersion = "1.0.0";
 
         private float nextSearchTime = 0f;
         private Camera mainCamera;
+        private BaseGridController currentTargetInFront;
 
-        // Config dictionary mapping the exact root prefab names to their respective controllers
         private static readonly Dictionary<string, Type> ObjectConfig = new Dictionary<string, Type>
         {
             { "Animation grid A2", typeof(WallController) },
@@ -33,45 +33,46 @@ namespace RefAnimationGrid
 
         private void Update()
         {
-            // 1. Scene scanning loop (Triggers every 3 seconds natively via MeshRenderers)
             if (Time.time > nextSearchTime)
             {
                 nextSearchTime = Time.time + 3f;
                 FindAndLinkObjectsOptimized();
             }
 
-            // 2. Front hemisphere input router
-            BaseGridController target = FindClosestObjectInFront();
-            if (target != null)
+            // Рассчитываем цель в полусфере один раз за кадр
+            currentTargetInFront = FindClosestObjectInFront();
+
+            if (currentTargetInFront != null)
             {
-                if (Input.GetKeyDown(KeyCode.RightBracket)) target.NextFrame();
-                if (Input.GetKeyDown(KeyCode.LeftBracket)) target.PrevFrame();
+                if (Input.GetKeyDown(KeyCode.RightBracket)) currentTargetInFront.NextFrame();
+                if (Input.GetKeyDown(KeyCode.LeftBracket)) currentTargetInFront.PrevFrame();
+
+                // Клавиша P для запуска / паузы видеопотока на стене
+                if (Input.GetKeyDown(KeyCode.P)) currentTargetInFront.TogglePlayPause();
             }
+        }
+
+        // Позволяет окну OnGUI узнать, видит ли игрок этот конкретный холст
+        public BaseGridController GetCurrentTarget()
+        {
+            return currentTargetInFront;
         }
 
         private void FindAndLinkObjectsOptimized()
         {
-            // Возвращаемся к старой доброй логике прямого поиска по именам корней префабов!
             foreach (var config in ObjectConfig)
             {
                 string baseName = config.Key;
                 Type controllerType = config.Value;
 
-                // Ищем объект напрямую по имени, как в старой версии мода
                 GameObject obj = GameObject.Find($"{baseName}(Clone)") ?? GameObject.Find(baseName);
-
-                if (obj != null)
+                if (obj != null && obj.GetComponent(controllerType) == null)
                 {
-                    // Если объект найден и на нём ещё нет нужного контроллера — вешаем его
-                    if (obj.GetComponent(controllerType) == null)
-                    {
-                        obj.AddComponent(controllerType);
-                        Logger.LogInfo($"[RefAnimationGrid] SUCCESS: Linked {controllerType.Name} to found object: {obj.name}");
-                    }
+                    obj.AddComponent(controllerType);
+                    Logger.LogInfo($"[RefAnimationGrid] SUCCESS: Linked {controllerType.Name} to object: {obj.name}");
                 }
             }
         }
-
 
         private BaseGridController FindClosestObjectInFront()
         {
@@ -92,11 +93,10 @@ namespace RefAnimationGrid
                 Vector3 targetPos = controller.transform.position;
                 Vector3 toTarget = targetPos - camPos;
 
-                // Hemisphere verification via dot product
                 float dot = Vector3.Dot(camForward, toTarget.normalized);
                 if (dot > 0f)
                 {
-                    float distance = toTarget.sqrMagnitude; // Extremely fast check without square roots
+                    float distance = toTarget.sqrMagnitude;
                     if (distance < minDistance)
                     {
                         minDistance = distance;
