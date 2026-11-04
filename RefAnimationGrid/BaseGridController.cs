@@ -164,19 +164,29 @@ namespace RefAnimationGrid
             }
             else
             {
-                // MODE 1: НАДЕЖНАЯ СУПЕР-ПЕРЕМОТКА ВПЕРЕД
-                long step = 1;
-                if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) step = 100;
-                else if (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) step = 500;
+                // MODE 1: ВОЗВРАТ К ОРИГИНАЛЬНОЙ РАБОЧЕЙ СХЕМЕ
+                if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))
+                {
+                    // Быстрый шаг вперед на 100 кадров
+                    videoPlayer.frame += 100;
+                }
+                else if (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))
+                {
+                    // Быстрый шаг вперед на 500 кадров
+                    videoPlayer.frame += 500;
+                }
+                else
+                {
+                    // НАДЁЖНЫЙ НАДТИВНЫЙ ШАГ: Метод, который использовался изначально!
+                    // Он заставляет движок Unity аппаратно сдвинуть каретку на +1 кадр без формул
+                    videoPlayer.StepForward();
+                }
 
-                long target = videoPlayer.frame + step;
-                long totalFrames = (long)videoPlayer.frameCount;
-
-                // Зацикливаем вперед, если улетели за конец видео
-                if (target >= totalFrames)
-                    target = target % totalFrames;
-
-                videoPlayer.frame = target;
+                // Защита от вылета за край видео
+                if (videoPlayer.frame >= (long)videoPlayer.frameCount)
+                {
+                    videoPlayer.frame = 0;
+                }
             }
         }
 
@@ -194,19 +204,25 @@ namespace RefAnimationGrid
             }
             else
             {
-                // MODE 1: НАДЕЖНАЯ СУПЕР-ПЕРЕМОТКА НАЗАД
-                long step = 1;
-                if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) step = 100;
-                else if (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) step = 500;
+                // MODE 1: НАДЕЖНЫЙ ШАГ НАЗАД
+                if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))
+                {
+                    videoPlayer.frame -= 100;
+                }
+                else if (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))
+                {
+                    videoPlayer.frame -= 500;
+                }
+                else
+                {
+                    videoPlayer.frame -= 1;
+                }
 
-                long target = videoPlayer.frame - step;
-                if (target < 0)
-                    target = (long)videoPlayer.frameCount + target; // Зацикливание с учетом большого шага
-
-                if (target < 0)
-                    target = 0; // Дополнительная защита от сверхбольших прыжков
-
-                videoPlayer.frame = target;
+                // Защита от ухода в минус
+                if (videoPlayer.frame < 0)
+                {
+                    videoPlayer.frame = (long)videoPlayer.frameCount - 1;
+                }
             }
         }
 
