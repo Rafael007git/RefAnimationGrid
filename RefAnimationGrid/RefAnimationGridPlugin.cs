@@ -12,7 +12,7 @@ namespace RefAnimationGrid
     {
         public const string PluginGuid = "com.lorifel.refanimationgrid";
         public const string PluginName = "Reference Animation Grid";
-        public const string PluginVersion = "1.0.0";
+        public const string PluginVersion = "1.0.4";
 
         private float nextSearchTime = 0f;
         private Camera mainCamera;
