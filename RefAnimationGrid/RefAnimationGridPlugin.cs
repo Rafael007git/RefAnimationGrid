@@ -12,7 +12,7 @@ namespace RefAnimationGrid
     {
         public const string PluginGuid = "com.lorifel.refanimationgrid";
         public const string PluginName = "Reference Animation Grid";
-        public const string PluginVersion = "1.0.0";
+        public const string PluginVersion = "1.0.2";
 
         private float nextSearchTime = 0f;
         private Camera mainCamera;
@@ -51,27 +51,22 @@ namespace RefAnimationGrid
 
         private void FindAndLinkObjectsOptimized()
         {
-            // УВЕЛИЧИВАЕМ ГЛУБИНУ ПОИСКА: Ищем базовый Renderer (вместо MeshRenderer) 
-            // и передаем true, чтобы радар видел даже временно отключенные или неактивные объекты в рантайме.
-            Renderer[] allRenderers = FindObjectsOfType<Renderer>(true);
-
-            foreach (var renderer in allRenderers)
+            // Возвращаемся к старой доброй логике прямого поиска по именам корней префабов!
+            foreach (var config in ObjectConfig)
             {
-                if (renderer == null || renderer.transform.root == null) continue;
+                string baseName = config.Key;
+                Type controllerType = config.Value;
 
-                GameObject rootObj = renderer.transform.root.gameObject;
-                string cleanName = rootObj.name.Replace("(Clone)", "").Trim();
+                // Ищем объект напрямую по имени, как в старой версии мода
+                GameObject obj = GameObject.Find($"{baseName}(Clone)") ?? GameObject.Find(baseName);
 
-                // Отладочный лог, чтобы точно увидеть, какие объекты вообще находит игра
-                // Раскомментируйте строчку ниже, если захотите увидеть ВСЕ объекты в консоли BepInEx:
-                // Logger.LogInfo($"[RefAnimationGrid Debug] Found renderer on object: {cleanName}");
-
-                if (ObjectConfig.TryGetValue(cleanName, out Type controllerType))
+                if (obj != null)
                 {
-                    if (rootObj.GetComponent(controllerType) == null)
+                    // Если объект найден и на нём ещё нет нужного контроллера — вешаем его
+                    if (obj.GetComponent(controllerType) == null)
                     {
-                        rootObj.AddComponent(controllerType);
-                        Logger.LogInfo($"[RefAnimationGrid] SUCCESS: Linked {controllerType.Name} to object: {rootObj.name}");
+                        obj.AddComponent(controllerType);
+                        Logger.LogInfo($"[RefAnimationGrid] SUCCESS: Linked {controllerType.Name} to found object: {obj.name}");
                     }
                 }
             }
