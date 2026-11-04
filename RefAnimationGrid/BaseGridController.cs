@@ -53,7 +53,7 @@ namespace RefAnimationGrid
 
         // UI & Режимы: false = Play and Select (Mode 1), true = Reference (Mode 2)
         private bool isReferenceMode = false;
-        private Rect guiWindowRect = new Rect(40, 40, 300, 160);
+        private Rect guiWindowRect;
 
         private void Start()
         {
@@ -86,6 +86,16 @@ namespace RefAnimationGrid
                 IsVideoMode = false;
                 ApplyTexture();
             }
+
+            // Вычисляем центр экрана по ширине: (ШиринаЭкрана / 2) - (ШиринаПульта / 2)
+            float windowWidth = 300f;
+            float windowHeight = 160f;
+            float posX = (Screen.width / 2f) - (windowWidth / 2f);
+            // Сажаем пульт в самый низ экрана с небольшим отступом в 60 пикселей от края
+            float posY = 40f;
+            // float posY = Screen.height - windowHeight - 60f;
+
+            guiWindowRect = new Rect(posX, posY, windowWidth, windowHeight);
         }
 
         private void SetupVideoPlayer(string path)
@@ -112,7 +122,7 @@ namespace RefAnimationGrid
 
             // ИСПРАВЛЕНИЕ: корень transform не трогаем! Масштабируем ТОЛЬКО вертикальные холсты.
             // Высота остается строго 2 метра (y = 2), а ширина подстраивается под видео (x = 2 * aspectRatio)
-            Vector3 targetCanvasScale = new Vector3(2.0f * aspectRatio, 2.0f, 1.0f);
+            Vector3 targetCanvasScale = new Vector3(1.0f * aspectRatio, 1.0f, 1.0f);
 
             if (frontCanvasTransform != null) frontCanvasTransform.localScale = targetCanvasScale;
             if (backCanvasTransform != null) backCanvasTransform.localScale = targetCanvasScale;
@@ -154,12 +164,19 @@ namespace RefAnimationGrid
             }
             else
             {
-                // MODE 1: УМНАЯ СУПЕР-ПЕРЕМОТКА ВПЕРЕД
+                // MODE 1: НАДЕЖНАЯ СУПЕР-ПЕРЕМОТКА ВПЕРЕД
                 long step = 1;
                 if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) step = 100;
                 else if (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) step = 500;
 
-                videoPlayer.frame = (videoPlayer.frame + step) % (long)videoPlayer.frameCount;
+                long target = videoPlayer.frame + step;
+                long totalFrames = (long)videoPlayer.frameCount;
+
+                // Зацикливаем вперед, если улетели за конец видео
+                if (target >= totalFrames)
+                    target = target % totalFrames;
+
+                videoPlayer.frame = target;
             }
         }
 
@@ -177,14 +194,17 @@ namespace RefAnimationGrid
             }
             else
             {
-                // MODE 1: УМНАЯ СУПЕР-ПЕРЕМОТКА НАЗАД
+                // MODE 1: НАДЕЖНАЯ СУПЕР-ПЕРЕМОТКА НАЗАД
                 long step = 1;
                 if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) step = 100;
                 else if (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) step = 500;
 
                 long target = videoPlayer.frame - step;
-                if (target < 0) target = (long)videoPlayer.frameCount + target; // Зацикливание с учетом большого шага
-                if (target < 0) target = 0; // Дополнительная защита
+                if (target < 0)
+                    target = (long)videoPlayer.frameCount + target; // Зацикливание с учетом большого шага
+
+                if (target < 0)
+                    target = 0; // Дополнительная защита от сверхбольших прыжков
 
                 videoPlayer.frame = target;
             }
