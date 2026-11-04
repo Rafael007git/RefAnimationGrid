@@ -1,7 +1,5 @@
 ﻿using System;
-using System.IO;
 using System.Collections.Generic;
-using System.Reflection;
 using BepInEx;
 using UnityEngine;
 
@@ -16,119 +14,102 @@ namespace RefAnimationGrid
         public const string PluginName = "Reference Animation Grid";
         public const string PluginVersion = "1.0.0";
 
-        private static string imagesFolder;
-        private static List<Texture2D> loadedTextures = new List<Texture2D>();
         private float nextSearchTime = 0f;
+        private Camera mainCamera;
+
+        // Config dictionary mapping the exact root prefab names to their respective controllers
+        private static readonly Dictionary<string, Type> ObjectConfig = new Dictionary<string, Type>
+        {
+            { "Animation grid A2", typeof(WallController) },
+            { "Animation grid B2", typeof(WallController) },
+            { "Painting vertical", typeof(VerticalContentController) },
+            { "Painting horizontal", typeof(HorizontalContentController) }
+        };
 
         private void Awake()
         {
-            string pluginsDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-            imagesFolder = Path.Combine(pluginsDir, "RefAnimationGrid");
-
-            if (!Directory.Exists(imagesFolder))
-            {
-                Directory.CreateDirectory(imagesFolder);
-            }
-
-            LoadAllPNGs();
+            TextureRepository.Init();
         }
 
         private void Update()
         {
-            // Сканируем сцену раз в 3 секунды на появление ЛЮБОЙ из стен
+            // 1. Scene scanning loop (Triggers every 3 seconds natively via MeshRenderers)
             if (Time.time > nextSearchTime)
             {
                 nextSearchTime = Time.time + 3f;
+                FindAndLinkObjectsOptimized();
+            }
 
-                // Ищем префаб А2
-                GameObject wallA2 = GameObject.Find("Animation grid A2(Clone)") ?? GameObject.Find("Animation grid A2");
-                if (wallA2 != null && wallA2.GetComponent<WallController>() == null)
-                {
-                    wallA2.AddComponent<WallController>();
-                    Logger.LogInfo("[RefAnimationGrid] Linked controller to Animation grid A2");
-                }
+            // 2. Front hemisphere input router
+            BaseGridController target = FindClosestObjectInFront();
+            if (target != null)
+            {
+                if (Input.GetKeyDown(KeyCode.RightBracket)) target.NextFrame();
+                if (Input.GetKeyDown(KeyCode.LeftBracket)) target.PrevFrame();
+            }
+        }
 
-                // Ищем префаб B2
-                GameObject wallB2 = GameObject.Find("Animation grid B2(Clone)") ?? GameObject.Find("Animation grid B2");
-                if (wallB2 != null && wallB2.GetComponent<WallController>() == null)
+        private void FindAndLinkObjectsOptimized()
+        {
+            // УВЕЛИЧИВАЕМ ГЛУБИНУ ПОИСКА: Ищем базовый Renderer (вместо MeshRenderer) 
+            // и передаем true, чтобы радар видел даже временно отключенные или неактивные объекты в рантайме.
+            Renderer[] allRenderers = FindObjectsOfType<Renderer>(true);
+
+            foreach (var renderer in allRenderers)
+            {
+                if (renderer == null || renderer.transform.root == null) continue;
+
+                GameObject rootObj = renderer.transform.root.gameObject;
+                string cleanName = rootObj.name.Replace("(Clone)", "").Trim();
+
+                // Отладочный лог, чтобы точно увидеть, какие объекты вообще находит игра
+                // Раскомментируйте строчку ниже, если захотите увидеть ВСЕ объекты в консоли BepInEx:
+                // Logger.LogInfo($"[RefAnimationGrid Debug] Found renderer on object: {cleanName}");
+
+                if (ObjectConfig.TryGetValue(cleanName, out Type controllerType))
                 {
-                    wallB2.AddComponent<WallController>();
-                    Logger.LogInfo("[RefAnimationGrid] Linked controller to Animation grid B2");
+                    if (rootObj.GetComponent(controllerType) == null)
+                    {
+                        rootObj.AddComponent(controllerType);
+                        Logger.LogInfo($"[RefAnimationGrid] SUCCESS: Linked {controllerType.Name} to object: {rootObj.name}");
+                    }
                 }
             }
         }
 
-        private void LoadAllPNGs()
+
+        private BaseGridController FindClosestObjectInFront()
         {
-            loadedTextures.Clear();
-            if (!Directory.Exists(imagesFolder)) return;
+            if (mainCamera == null) mainCamera = Camera.main;
+            if (mainCamera == null) return null;
 
-            string[] files = Directory.GetFiles(imagesFolder, "*.png");
-            Array.Sort(files);
+            BaseGridController[] allControllers = FindObjectsOfType<BaseGridController>();
+            BaseGridController closestTarget = null;
+            float minDistance = float.MaxValue;
 
-            foreach (string file in files)
+            Vector3 camPos = mainCamera.transform.position;
+            Vector3 camForward = mainCamera.transform.forward;
+
+            foreach (var controller in allControllers)
             {
-                byte[] fileData = File.ReadAllBytes(file);
-                Texture2D tex = new Texture2D(2, 2);
+                if (controller == null) continue;
 
-                if (tex.LoadImage(fileData))
+                Vector3 targetPos = controller.transform.position;
+                Vector3 toTarget = targetPos - camPos;
+
+                // Hemisphere verification via dot product
+                float dot = Vector3.Dot(camForward, toTarget.normalized);
+                if (dot > 0f)
                 {
-                    loadedTextures.Add(tex);
+                    float distance = toTarget.sqrMagnitude; // Extremely fast check without square roots
+                    if (distance < minDistance)
+                    {
+                        minDistance = distance;
+                        closestTarget = controller;
+                    }
                 }
             }
-            Logger.LogInfo($"[RefAnimationGrid] Successfully loaded reference frames count: {loadedTextures.Count}");
-        }
-
-        // Внутренний динамический контроллер для конкретной стены
-        public class WallController : MonoBehaviour
-        {
-            private Renderer frontRenderer;
-            private Renderer backRenderer;
-            private int currentFrameIndex = 0;
-            private const string SHADER_PROPERTY_NAME = "_UserTex";
-
-            private void Start()
-            {
-                Transform frontCanvas = transform.Find("PlaneV front");
-                Transform backCanvas = transform.Find("PlaneV back");
-
-                if (frontCanvas != null && backCanvas != null)
-                {
-                    frontRenderer = frontCanvas.GetComponent<Renderer>();
-                    backRenderer = backCanvas.GetComponent<Renderer>();
-                    ApplyTexture();
-                }
-            }
-
-            private void Update()
-            {
-                if (frontRenderer == null || backRenderer == null || loadedTextures.Count == 0) return;
-
-                // Перелистывание кадров (работает синхронно или независимо для каждой заспавненной стены)
-                if (Input.GetKeyDown(KeyCode.RightBracket))
-                {
-                    currentFrameIndex = (currentFrameIndex + 1) % loadedTextures.Count;
-                    ApplyTexture();
-                }
-                if (Input.GetKeyDown(KeyCode.LeftBracket))
-                {
-                    currentFrameIndex--;
-                    if (currentFrameIndex < 0) currentFrameIndex = loadedTextures.Count - 1;
-                    ApplyTexture();
-                }
-            }
-
-            private void ApplyTexture()
-            {
-                if (loadedTextures.Count == 0) return;
-                Texture2D currentTex = loadedTextures[currentFrameIndex];
-
-                if (frontRenderer != null && frontRenderer.material != null && frontRenderer.material.HasProperty(SHADER_PROPERTY_NAME))
-                    frontRenderer.material.SetTexture(SHADER_PROPERTY_NAME, currentTex);
-
-                if (backRenderer != null && backRenderer.material != null && backRenderer.material.HasProperty(SHADER_PROPERTY_NAME))
-                    backRenderer.material.SetTexture(SHADER_PROPERTY_NAME, currentTex);
-            }
+            return closestTarget;
         }
     }
 }
